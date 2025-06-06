@@ -1,0 +1,129 @@
+bootcmd=run distro_bootcmd
+bootdelay=2
+baudrate=115200
+arch=arm
+cpu=armv8
+board=am62x
+board_name=am62x
+vendor=ti
+soc=k3
+set_android_boot=setenv android_boot 1;setenv partitions $partitions_android;setenv mmcdev 0;setenv force_avb 0;saveenv;
+get_current_slot=if part number mmc ${mmcdev} misc control_part_number; then echo misc partition number:${control_part_number};ab_select current_slot mmc ${mmcdev}:${control_part_number};else echo misc partition not found;fi;
+avb_verify=avb init ${mmcdev}; avb verify $slot_suffix;
+mmc_boot=if mmc dev ${devnum}; then devtype=mmc; run scan_dev_for_boot_part; fi
+boot_net_usb_start=usb start
+usb_boot=usb start; if usb dev ${devnum}; then devtype=usb; run scan_dev_for_boot_part; fi
+boot_efi_bootmgr=if fdt addr ${fdt_addr_r}; then bootefi bootmgr ${fdt_addr_r};else bootefi bootmgr;fi
+boot_efi_binary=load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} efi/boot/bootaa64.efi; if fdt addr ${fdt_addr_r}; then bootefi ${kernel_addr_r} ${fdt_addr_r};else bootefi ${kernel_addr_r} ${fdtcontroladdr};fi
+load_efi_dtb=load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}${efi_fdtfile}
+efi_dtb_prefixes=/ /dtb/ /dtb/current/
+scan_dev_for_efi=setenv efi_fdtfile ${fdtfile}; for prefix in ${efi_dtb_prefixes}; do if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}${efi_fdtfile}; then run load_efi_dtb; fi;done;run boot_efi_bootmgr;if test -e ${devtype} ${devnum}:${distro_bootpart} efi/boot/bootaa64.efi; then echo Found EFI removable media binary efi/boot/bootaa64.efi; run boot_efi_binary; echo EFI LOAD FAILED: continuing...; fi; setenv efi_fdtfile
+boot_prefixes=/ /boot/
+boot_scripts=boot.scr.uimg boot.scr
+boot_script_dhcp=boot.scr.uimg
+boot_targets=linux fastboot recovery system panic 
+boot_syslinux_conf=extlinux/extlinux.conf
+boot_extlinux=sysboot ${devtype} ${devnum}:${distro_bootpart} any ${scriptaddr} ${prefix}${boot_syslinux_conf}
+scan_dev_for_extlinux=if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}${boot_syslinux_conf}; then echo Found ${prefix}${boot_syslinux_conf}; run boot_extlinux; echo SCRIPT FAILED: continuing...; fi
+boot_a_script=load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}${script}; source ${scriptaddr}
+scan_dev_for_scripts=for script in ${boot_scripts}; do if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}${script}; then echo Found U-Boot script ${prefix}${script}; run boot_a_script; echo SCRIPT FAILED: continuing...; fi; done
+scan_dev_for_boot=echo Scanning ${devtype} ${devnum}:${distro_bootpart}...; for prefix in ${boot_prefixes}; do run scan_dev_for_extlinux; run scan_dev_for_scripts; done;run scan_dev_for_efi;
+scan_dev_for_boot_part=part list ${devtype} ${devnum} -bootable devplist; env exists devplist || setenv devplist 1; for distro_bootpart in ${devplist}; do if fstype ${devtype} ${devnum}:${distro_bootpart} bootfstype; then run scan_dev_for_boot; fi; done; setenv devplist
+bootcmd_linux=if test "${android_boot}" -eq 0; then;run findfdt; run envboot; run init_${boot}; run boot_rprocs;if test ${boot_fit} -eq 1; then;run get_fit_${boot}; run get_fit_${boot}; run get_overlaystring; run run_fit;else;run get_kern_${boot}; run get_fdt_${boot}; run get_overlay_${boot}; run run_kern;fi;fi
+bootcmd_fastboot=if test "${android_boot}" -eq 1; then;setenv run_fastboot 0;if gpt verify mmc ${mmcdev} ${partitions}; then; else echo Broken MMC partition scheme;setenv run_fastboot 1;fi; if test "${run_fastboot}" -eq 0; then if bcb load 0 misc; then if bcb test command = bootonce-bootloader; then echo BCB: Bootloader boot...; bcb clear command; bcb store; setenv run_fastboot 1;elif bcb test command = boot-fastboot; then echo BCB: fastboot userspace boot...; setenv force_recovery 1;fi; else echo Warning: BCB is corrupted or does not exist; fi;fi;if test "${run_fastboot}" -eq 1; then echo Running Fastboot...;fastboot 0; fi;fi
+bootcmd_recovery=if test "${android_boot}" -eq 1; then;setenv run_recovery 0;if bcb load 0 misc; then if bcb test command = boot-recovery; then; echo BCB: Recovery boot...; setenv run_recovery 1;fi;else echo Warning: BCB is corrupted or does not exist; fi;if test "${skip_recovery}" -eq 1; then echo Recovery skipped by environment;setenv run_recovery 0;fi;if test "${force_recovery}" -eq 1; then echo Recovery forced by environment;setenv run_recovery 1;fi;if test "${run_recovery}" -eq 1; then echo Running Recovery...;mmc dev ${mmcdev};setenv bootargs "${bootargs} androidboot.serialno=${serial#}";run get_current_slot; if test -e "${current_slot}"; then setenv slot_suffix _${current_slot}; else echo current_slot not found;exit;fi;setenv bootargs_ab androidboot.slot_suffix=${slot_suffix}; echo A/B cmdline addition: ${bootargs_ab};setenv bootargs ${bootargs} ${bootargs_ab};if test "${force_avb}" -eq 1; then if run avb_verify; then echo AVB verification OK.;setenv bootargs "$bootargs $avb_bootargs";else echo AVB verification failed.;exit; fi;else setenv bootargs "$bootargs androidboot.verifiedbootstate=orange";echo Running without AVB...; fi;part start mmc ${mmcdev} boot${slot_suffix} boot_start;part size mmc ${mmcdev} boot${slot_suffix} boot_size;if mmc read ${loadaddr} ${boot_start} ${boot_size}; then echo Preparing FDT...; if test $board_name = am62x_skevm; then echo "  Reading DTB for am62x_skevm..."; setenv dtb_index 0;elif test $board_name = am62x_lp_skevm; then echo "  Reading DTB for am62x_lp_skevm..."; setenv dtb_index 1;else echo Error: Android boot is not supported for $board_name; exit; fi; abootimg get dtb --index=$dtb_index dtb_start dtb_size; cp.b $dtb_start $fdt_addr_r $dtb_size; fdt addr $fdt_addr_r $fdt_size; part start mmc ${mmcdev} dtbo${slot_suffix} dtbo_start; part size mmc ${mmcdev} dtbo${slot_suffix} dtbo_size; mmc read ${dtboaddr} ${dtbo_start} ${dtbo_size}; echo "  Applying DTBOs..."; adtimg addr $dtboaddr; dtbo_idx=''; for index in $dtbo_index; do adtimg get dt --index=$index dtbo_addr; fdt resize; fdt apply $dtbo_addr; if test $dtbo_idx = ''; then dtbo_idx=${index}; else dtbo_idx=${dtbo_idx},${index}; fi; done; setenv bootargs "$bootargs androidboot.dtbo_idx=$dtbo_idx "; echo Running Android Recovery...;bootm ${loadaddr} ${loadaddr} ${fdt_addr_r};fi;echo Failed to boot Android...;reset;fi;fi
+bootcmd_system=if test "${android_boot}" -eq 1; then;echo Loading Android boot partition...;mmc dev ${mmcdev};setenv bootargs ${bootargs} androidboot.serialno=${serial#};run get_current_slot; if test -e "${current_slot}"; then setenv slot_suffix _${current_slot}; else echo current_slot not found;exit;fi;setenv bootargs_ab androidboot.slot_suffix=${slot_suffix}; echo A/B cmdline addition: ${bootargs_ab};setenv bootargs ${bootargs} ${bootargs_ab};if test "${force_avb}" -eq 1; then if run avb_verify; then echo AVB verification OK.;setenv bootargs "$bootargs $avb_bootargs";else echo AVB verification failed.;exit; fi;else setenv bootargs "$bootargs androidboot.verifiedbootstate=orange";echo Running without AVB...; fi;part start mmc ${mmcdev} boot${slot_suffix} boot_start;part size mmc ${mmcdev} boot${slot_suffix} boot_size;if mmc read ${loadaddr} ${boot_start} ${boot_size}; then echo Preparing FDT...; if test $board_name = am62x_skevm; then echo "  Reading DTB for am62x_skevm..."; setenv dtb_index 0;elif test $board_name = am62x_lp_skevm; then echo "  Reading DTB for am62x_lp_skevm..."; setenv dtb_index 1;else echo Error: Android boot is not supported for $board_name; exit; fi; abootimg get dtb --index=$dtb_index dtb_start dtb_size; cp.b $dtb_start $fdt_addr_r $dtb_size; fdt addr $fdt_addr_r $fdt_size; part start mmc ${mmcdev} dtbo${slot_suffix} dtbo_start; part size mmc ${mmcdev} dtbo${slot_suffix} dtbo_size; mmc read ${dtboaddr} ${dtbo_start} ${dtbo_size}; echo "  Applying DTBOs..."; adtimg addr $dtboaddr; dtbo_idx=''; for index in $dtbo_index; do adtimg get dt --index=$index dtbo_addr; fdt resize; fdt apply $dtbo_addr; if test $dtbo_idx = ''; then dtbo_idx=${index}; else dtbo_idx=${dtbo_idx},${index}; fi; done; setenv bootargs "$bootargs androidboot.dtbo_idx=$dtbo_idx "; setenv bootargs "${bootargs}  androidboot.force_normal_boot=1"  ; echo Running Android...;bootm ${loadaddr} ${loadaddr} ${fdt_addr_r};fi;echo Failed to boot Android...;fi
+bootcmd_panic=if test "${android_boot}" -eq 1; then;fastboot 0; reset;fi
+distro_bootcmd=for target in ${boot_targets}; do run bootcmd_${target}; done
+loadaddr=0x82000000
+kernel_addr_r=0x82000000
+fdtaddr=0x88000000
+dtboaddr=0x89000000
+fdt_addr_r=0x88000000
+rdaddr=0x88080000
+ramdisk_addr_r=0x88080000
+scriptaddr=0x80000000
+pxefile_addr_r=0x80100000
+fdtoverlay_addr_r=0x80200000
+bootm_size=0x10000000
+boot_fdt=try
+boot_fit=0
+addr_fit=0x90000000
+name_fit=fitImage
+update_to_fit=setenv loadaddr ${addr_fit}; setenv bootfile ${name_fit}
+get_overlaystring=for overlay in $name_overlays;do;setenv overlaystring ${overlaystring}'#'${overlay};done;
+run_fit=bootm ${addr_fit}#${fdtfile}${overlaystring}
+mmcdev=0
+mmcrootfstype=ext4 rootwait
+finduuid=part uuid ${boot} ${bootpart} uuid
+args_mmc=run finduuid;setenv bootargs console=${console} ${optargs} root=PARTUUID=${uuid} rw rootfstype=${mmcrootfstype}
+loadbootscript=load mmc ${mmcdev} ${loadaddr} boot.scr
+bootscript=echo Running bootscript from mmc${mmcdev} ...; source ${loadaddr}
+bootenvfile=uEnv.txt
+importbootenv=echo Importing environment from mmc${mmcdev} ...; env import -t ${loadaddr} ${filesize}
+loadbootenv=fatload mmc ${mmcdev} ${loadaddr} ${bootenvfile}
+loadimage=load ${devtype} ${bootpart} ${loadaddr} ${bootdir}/${bootfile}
+loadfdt=load ${devtype} ${bootpart} ${fdtaddr} ${bootdir}/${fdtfile}
+envboot=mmc dev ${mmcdev}; if mmc rescan; then echo SD/MMC found on device ${mmcdev};if run loadbootscript; then run bootscript;else if run loadbootenv; then echo Loaded env from ${bootenvfile};run importbootenv;fi;if test -n $uenvcmd; then echo Running uenvcmd ...;run uenvcmd;fi;fi;fi;
+mmcloados=if test ${boot_fdt} = yes || test ${boot_fdt} = try; then if run loadfdt; then bootz ${loadaddr} - ${fdtaddr}; else if test ${boot_fdt} = try; then bootz; else echo WARN: Cannot load the DT; fi; fi; else bootz; fi;
+mmcboot=mmc dev ${mmcdev}; devnum=${mmcdev}; devtype=mmc; if mmc rescan; then echo SD/MMC found on device ${mmcdev};if run loadimage; then run args_mmc; if test ${boot_fit} -eq 1; then run run_fit; else run mmcloados;fi;fi;fi;
+default_device_tree=k3-am625-sk.dtb
+findfdt=setenv name_fdt ${default_device_tree};if test $board_name = am62x_skevm; then setenv name_fdt k3-am625-sk.dtb; fi;if test $board_name = am62x_lp_skevm; then setenv name_fdt k3-am62x-lp-sk.dtb; fi;setenv fdtfile ${name_fdt}
+name_kern=Image
+console=ttyS2,115200n8
+args_all=setenv optargs ${optargs} earlycon=ns16550a,mmio32,0x02800000 ${mtdparts}
+run_kern=booti ${loadaddr} ${rd_spec} ${fdtaddr}
+boot=mmc
+mmcdev=1
+bootpart=1:2
+bootdir=/boot
+rd_spec=-
+init_mmc=run args_all args_mmc
+get_fdt_mmc=load mmc ${bootpart} ${fdtaddr} ${bootdir}/${name_fdt}
+get_overlay_mmc=fdt address ${fdtaddr};fdt resize 0x100000;for overlay in $name_overlays;do;load mmc ${bootpart} ${dtboaddr} ${bootdir}/${overlay} && fdt apply ${dtboaddr};done;
+get_kern_mmc=load mmc ${bootpart} ${loadaddr} ${bootdir}/${name_kern}
+get_fit_mmc=load mmc ${bootpart} ${addr_fit} ${bootdir}/${name_fit}
+partitions=uuid_disk=${uuid_gpt_disk};name=rootfs,start=0,size=-,uuid=${uuid_gpt_rootfs}
+partitions_android=uuid_disk=${uuid_gpt_disk};name=bootloader,start=5M,size=8M,uuid=${uuid_gpt_bootloader};name=tiboot3,start=4M,size=1M,uuid=${uuid_gpt_tiboot3};name=uboot-env,start=13M,size=512K,uuid=${uuid_gpt_env};name=misc,start=13824K,size=512K,uuid=${uuid_gpt_misc};name=boot_a,size=40M,uuid=${uuid_gpt_boot_a};name=boot_b,size=40M,uuid=${uuid_gpt_boot_b};name=dtbo_a,size=8M,uuid=${uuid_gpt_dtbo_a};name=dtbo_b,size=8M,uuid=${uuid_gpt_dtbo_b};name=vbmeta_a,size=64K,uuid=${uuid_gpt_vbmeta_a};name=vbmeta_b,size=64K,uuid=${uuid_gpt_vbmeta_b};name=super,size=4608M,uuid=${uuid_gpt_super};name=metadata,size=16M,uuid=${uuid_gpt_metadata};name=persist,size=32M,uuid=${uuid_gpt_persist};name=userdata,size=-,uuid=${uuid_gpt_userdata}
+nbootpart=NAND.file-system
+nbootvolume=ubi0:rootfs
+bootdir=/boot
+rd_spec=-
+ubi_init=ubi part ${nbootpart}; ubifsmount ${nbootvolume};
+args_nand=setenv bootargs console=${console} ${optargs} ubi.mtd=${nbootpart} root=${nbootvolume} rootfstype=ubifs
+init_nand=run args_all args_nand ubi_init
+get_fdt_nand=ubifsload ${fdtaddr} ${bootdir}/${fdtfile};
+get_overlay_nand=fdt address ${fdtaddr};fdt resize 0x100000;for overlay in $name_overlays;do;ubifsload ${dtboaddr} ${bootdir}/${overlay} && fdt apply ${dtboaddr};done;
+get_kern_nand=ubifsload ${loadaddr} ${bootdir}/${name_kern}
+get_fit_nand=ubifsload ${addr_fit} ${bootdir}/${name_fit}
+dfu_alt_info_mmc=boot part 1 1;rootfs part 1 2;tiboot3.bin fat 1 1;tispl.bin fat 1 1;u-boot.img fat 1 1;uEnv.txt fat 1 1;sysfw.itb fat 1 1
+dfu_alt_info_emmc=rawemmc raw 0 0x800000 mmcpart 1;rootfs part 0 1 mmcpart 0;tiboot3.bin.raw raw 0x0 0x400 mmcpart 1;tispl.bin.raw raw 0x400 0x1000 mmcpart 1;u-boot.img.raw raw 0x1400 0x2000 mmcpart 1;u-env.raw raw 0x3400 0x100 mmcpart 1;sysfw.itb.raw raw 0x3600 0x800 mmcpart 1
+dfu_alt_info_ram=tispl.bin ram 0x80080000 0x200000;u-boot.img ram 0x81000000 0x400000
+dfu_alt_info_ospi=tiboot3.bin raw 0x0 0x080000;tispl.bin raw 0x080000 0x200000;u-boot.img raw 0x280000 0x400000;u-boot-env raw 0x680000 0x020000;sysfw.itb raw 0x6c0000 0x100000;rootfs raw 0x800000 0x3800000
+dfu_alt_info_ospi_nand=tiboot3.bin raw 0x0 0x080000;tispl.bin raw 0x080000 0x200000;u-boot.img raw 0x280000 0x400000;u-boot-env raw 0x680000 0x040000;rootfs raw 0x2000000 0x5fc0000;phypattern raw 0x7fc0000 0x40000
+dfu_alt_info_gpmc_nand=tiboot3.bin raw 0x0 0x00200000;tispl.bin raw 0x00200000 0x00200000;tiboot3.backup raw 0x00400000 0x00200000;u-boot.img raw 0x00600000 0x00400000;u-boot-env raw 0x00a00000 0x00040000;u-boot-env.backup raw 0x00a40000 0x00040000;file-system raw 0x00a80000 0x3f580000
+args_usb=run finduuid;setenv bootargs console=${console} ${optargs} root=PARTUUID=${uuid} rw rootfstype=${mmcrootfstype}
+init_usb=run args_all args_usb
+get_fdt_usb=load usb ${bootpart} ${fdtaddr} ${bootdir}/${fdtfile}
+get_overlay_usb=fdt address ${fdtaddr};fdt resize 0x100000;for overlay in $name_overlays;do;load usb ${bootpart} ${dtboaddr} ${bootdir}/${overlay} && fdt apply ${dtboaddr};done;
+get_kern_usb=load usb ${bootpart} ${loadaddr} ${bootdir}/${name_kern}
+get_fit_usb=load usb ${bootpart} ${addr_fit} ${bootdir}/${name_fit}
+usbboot=setenv boot usb;setenv bootpart 0:2;usb start;run findfdt;run init_usb;run get_kern_usb;run get_fdt_usb;run run_kern
+nbootpart=ospi.rootfs
+nbootvolume=ubi0:rootfs
+bootdir=/boot
+rd_spec=-
+ubi_init=ubi part ${nbootpart}; ubifsmount ${nbootvolume};
+args_ospi_nand=setenv bootargs console=${console} ${optargs} ubi.mtd=${nbootpart} root=${nbootvolume} rootfstype=ubifs
+init_ospi_nand=run args_all args_ospi_nand ubi_init
+get_fdt_ospi_nand=ubifsload ${fdtaddr} ${bootdir}/${fdtfile};
+get_overlay_ospi_nand=fdt address ${fdtaddr};fdt resize 0x100000;for overlay in $name_overlays;do;ubifsload ${dtboaddr} ${bootdir}/${overlay} && fdt apply ${dtboaddr};done;
+get_kern_ospi_nand=ubifsload ${loadaddr} ${bootdir}/${name_kern}
+get_fit_ospi_nand=ubifsload ${addr_fit} ${bootdir}/${name_fit}
+dorprocboot=0
+boot_rprocs=if test ${dorprocboot} -eq 1 && test ${boot} = mmc; then rproc init;run boot_rprocs_mmc;fi;
+rproc_load_and_boot_one=if load mmc ${bootpart} $loadaddr ${rproc_fw}; then if rproc load ${rproc_id} ${loadaddr} ${filesize}; then rproc start ${rproc_id};fi;fi
+boot_rprocs_mmc=env set rproc_id;env set rproc_fw;env set secure_suffix;if test ${boot_fit} -eq 1; then env set secure_suffix -sec;fi;for i in ${rproc_fw_binaries}; do if test -z "${rproc_id}" ; then env set rproc_id $i;else env set rproc_fw $i${secure_suffix};run rproc_load_and_boot_one;env set rproc_id;env set rproc_fw;fi;done
+rproc_fw_binaries=0 /lib/firmware/am62-mcu-m4f0_0-fw 
+
+
