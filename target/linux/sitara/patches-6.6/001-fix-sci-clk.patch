@@ -1,0 +1,27 @@
+diff -urN linux-6.6.63/drivers/clk/keystone/sci-clk.c ti-linux-kernel/drivers/clk/keystone/sci-clk.c
+--- linux-6.6.63/drivers/clk/keystone/sci-clk.c	2024-11-22 21:38:37.000000000 +0700
++++ ti-linux-kernel/drivers/clk/keystone/sci-clk.c	2025-04-09 20:28:07.117089415 +0700
+@@ -516,6 +516,7 @@
+ 	struct sci_clk *sci_clk, *prev;
+ 	int num_clks = 0;
+ 	int num_parents;
++	bool state;
+ 	int clk_id;
+ 	const char * const clk_names[] = {
+ 		"clocks", "assigned-clocks", "assigned-clock-parents", NULL
+@@ -586,6 +587,15 @@
+ 				clk_id = args.args[1] + 1;
+ 
+ 				while (num_parents--) {
++					/* Check if this clock id is valid */
++					ret = provider->ops->is_auto(provider->sci,
++						sci_clk->dev_id, clk_id, &state);
++
++					if (ret) {
++						clk_id++;
++						continue;
++					}
++
+ 					sci_clk = devm_kzalloc(dev,
+ 							       sizeof(*sci_clk),
+ 							       GFP_KERNEL);
